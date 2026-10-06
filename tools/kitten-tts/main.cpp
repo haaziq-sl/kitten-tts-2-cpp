@@ -1,4 +1,5 @@
 #include "llama.h"
+#include "log.h"
 #include "text.h"
 #include "sampling.h"
 #include "decoder.h"
@@ -6,6 +7,7 @@
 #include <chrono>
 #include <clocale>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -44,7 +46,7 @@ int main(int argc,char ** argv) try {
     std::setlocale(LC_ALL,"C.UTF-8");
     try { std::locale::global(std::locale("C.UTF-8")); } catch (const std::runtime_error &) {}
     std::map<std::string,std::string> args;
-    const std::vector<std::string> flags={"--download-only","--offline","--no-normalize","--no-reference","--no-repack","--greedy","--tokens-only","--frontend","--help"};
+    const std::vector<std::string> flags={"--download-only","--offline","--no-normalize","--no-reference","--no-repack","--greedy","--tokens-only","--frontend","--help","--quiet"};
     for(int i=1;i<argc;++i) {
         std::string key=argv[i];
         if(std::find(flags.begin(),flags.end(),key)!=flags.end()) args[key]="1";
@@ -66,12 +68,18 @@ int main(int argc,char ** argv) try {
           "  --no-normalize --no-reference --greedy --tokens-only --report FILE\n"
           "  --logits FILE --force-tokens FILE (teacher-forced LM parity)\n"
           "  --decode-tokens FILE (zero-based codec IDs) --repeat N (benchmark)\n"
-          "  --frontend (JSON lines on stdin; text/chunking/sampling diagnostics)\n";
+          "  --frontend (JSON lines on stdin; text/chunking/sampling diagnostics)\n"
+          "  --quiet        show warnings, errors and a saved-file message\n";
         return 0;
     }
     auto get=[&](const std::string & key,const std::string & fallback){auto it=args.find(key);return it==args.end()?fallback:it->second;};
     const std::vector<std::string> known={"--repo","--revision","--decoder","--cache-dir","--assets","--model","--text","--voice","--output","--data","--threads","--decoder-threads","--seed","--preset","--max-tokens","--temperature","--top-k","--top-p","--min-p","--repetition-penalty","--repetition-window","--run-penalty","--run-grace","--chunk-chars","--chunk-min-chars","--chunk-gap","--report","--logits","--force-tokens","--decode-tokens","--repeat"};
     for(auto & a:args) if(std::find(flags.begin(),flags.end(),a.first)==flags.end() && std::find(known.begin(),known.end(),a.first)==known.end()) throw std::runtime_error("unknown option "+a.first);
+    if(args.count("--quiet")) {
+        common_log_set_verbosity_thold(LOG_LEVEL_WARN);
+        llama_log_set(common_log_default_callback,nullptr);
+        std::atexit([](){common_log_flush(common_log_main());});
+    }
     kitten_text_processing::Normalizer normalizer(get("--data",KITTEN_DEFAULT_DATA));
     if(args.count("--frontend")) {
         std::string line;
@@ -207,7 +215,8 @@ int main(int argc,char ** argv) try {
     report["lm_seconds"]=lm_seconds;report["decoder_seconds"]=decoder_seconds;report["generated_tokens"]=total_tokens;
     if(decoder) {auto audio=kitten::join(waves,gap);write_wav(get("--output","output.wav"),audio);report["audio_seconds"]=audio.size()/24000.0;report["rtf"]=(lm_seconds+decoder_seconds)/(audio.size()/24000.0);}
     if(args.count("--report")) write_json(args.at("--report"),report);
-    std::cout<<report.dump(2)<<'\n';
+    if(args.count("--quiet") && decoder) std::cout<<"Saved "<<get("--output","output.wav")<<'\n';
+    else std::cout<<report.dump(2)<<'\n';
     }
     return 0;
 } catch(const std::exception & e) {std::cerr<<"kitten-tts: "<<e.what()<<'\n';return 1;}
